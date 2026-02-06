@@ -10,35 +10,6 @@
  * Text Domain: made-neat-secure
  */
 
-// --- GitHub Updates (Plugin Update Checker) ---
-$puc_path = __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php';
-
-if ( file_exists( $puc_path ) ) {
-	require_once $puc_path;
-}
-
-add_action('plugins_loaded', function () {
-
-	if ( ! class_exists('\YahnisElsts\PluginUpdateChecker\v5\PucFactory') ) {
-		return;
-	}
-
-	$updateChecker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
-		'https://github.com/cyrilcalixton/made-neat-secure/',
-		__FILE__,
-		'made-neat-secure'
-	);
-
-	$updateChecker->setBranch('main');
-	$updateChecker->getVcsApi()->enableReleaseAssets();
-
-});
-
-// NOW your class starts
-final class Made_Neat_Secure {
-
-}
-
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
@@ -54,6 +25,35 @@ define( 'MNS_META_SWITCHED_AT', 'mns_switched_at' );
 define( 'MNS_DB_VERSION', '1.0.0' );
 define( 'MNS_LOG_TABLE', 'mns_secure_logs' );
 define( 'MNS_LOG_RETENTION_DAYS', 30 );
+
+
+// --- GitHub Updates (Plugin Update Checker) ---
+add_action( 'plugins_loaded', function () {
+
+	$puc_path = __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php';
+	if ( ! file_exists( $puc_path ) ) {
+		return;
+	}
+
+	require_once $puc_path;
+
+	if ( ! class_exists( '\\YahnisElsts\\PluginUpdateChecker\\v5\\PucFactory' ) ) {
+		return;
+	}
+
+	$updateChecker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
+		'https://github.com/cyrilcalixton/made-neat-secure/',
+		__FILE__,
+		'made-neat-secure'
+	);
+
+	// Repo default branch (used for metadata); releases provide the ZIP.
+	$updateChecker->setBranch( 'main' );
+
+	// Use GitHub Releases assets (ZIP uploaded to each release).
+	$updateChecker->getVcsApi()->enableReleaseAssets();
+}, 5 );
+
 
 final class Made_Neat_Secure {
 
@@ -74,26 +74,6 @@ final class Made_Neat_Secure {
 		$self->install_logs_table();
 		$self->schedule_log_cleanup();
 	}
-
-	// --- GitHub Updates (Plugin Update Checker) ---
-	$puc_path = __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php';
-
-	if ( file_exists( $puc_path ) ) {
-		require_once $puc_path;
-	}
-
-
-	use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
-
-	$updateChecker = PucFactory::buildUpdateChecker(
-    'https://github.com/cyrilcalixton/made-neat-secure/',
-    __FILE__,
-    'made-neat-secure'
-	);
-
-	// Tell PUC to use GitHub Releases assets.
-	$updateChecker->getVcsApi()->enableReleaseAssets();
-
 
 	/**
 	 * Deactivation hook entry point.
@@ -120,8 +100,7 @@ final class Made_Neat_Secure {
 
 		add_action( 'admin_bar_menu', array( $this, 'admin_bar_switch_back' ), 999 );
 
-		// “Every page” switch-back visibility: admin notice + frontend footer link
-		add_action( 'admin_notices', array( $this, 'admin_notice_switch_back' ) );
+
 		// Update Control actions (manual)
 		add_action( 'admin_post_mns_check_updates', array( $this, 'handle_check_updates' ) );
 		add_action( 'admin_post_mns_update_self', array( $this, 'handle_update_self' ) );
@@ -1320,7 +1299,6 @@ final class Made_Neat_Secure {
 		);
 	}
 
-
 	public function admin_bar_switch_back( $wp_admin_bar ) {
 		if ( ! is_object( $wp_admin_bar ) ) {
 			return;
@@ -1335,32 +1313,10 @@ final class Made_Neat_Secure {
 
 		$wp_admin_bar->add_node( array(
 			'id'    => 'mns_switch_back',
-			'title' => '↩ Switch back to ' . esc_html( $name ),
+			'title' => 'Switch back to ' . esc_html( $name ),
 			'href'  => $this->switch_back_url(),
-			'meta'  => array(
-				'class' => 'mns-switchback-top',
-			),
 		) );
-
-		add_action( 'admin_head', function() {
-			echo '<style>
-				#wpadminbar .mns-switchback-top > a {
-					background: #2563eb !important;
-					color: #ffffff !important;
-					border-radius: 999px !important;
-					padding: 0 12px !important;
-					margin-top: 3px !important;
-					font-weight: 700 !important;
-				}
-				#wpadminbar .mns-switchback-top > a:hover {
-					background: #1d4ed8 !important;
-					color: #ffffff !important;
-				}
-			</style>';
-		}, 999 );
 	}
-
-
 
 	public function admin_notice_switch_back() {
 		if ( ! $this->is_switched_session() ) {
@@ -1371,31 +1327,40 @@ final class Made_Neat_Secure {
 		$admin    = $admin_id ? get_user_by( 'id', $admin_id ) : null;
 		$name     = $admin ? $admin->user_login : 'admin';
 
-		echo '<div class="notice" style="
-			border-left: 4px solid #2563eb;
-			background: #eff6ff;
-			padding: 12px 14px;
-			border-radius: 10px;
-			box-shadow: 0 1px 2px rgba(0,0,0,.04);
-			max-width: 980px;
-		">';
-
-		echo '<p style="margin:0; font-size:14px; color:#0f172a;">';
-		echo '<strong style="color:#0f172a;">Switched session active:</strong> You are currently acting as another user.';
-		echo ' <a href="' . esc_url( $this->switch_back_url() ) . '" style="
-			color:#2563eb;
-			font-weight:700;
-			text-decoration:none;
-			margin-left:6px;
-		">↩ Switch back to ' . esc_html( $name ) . '</a>';
-		echo '</p>';
-
+		echo '<div class="notice notice-warning" style="border-left-color:#d63638;">';
+		echo '<p><strong>You are currently switched into another user.</strong> <a href="' . esc_url( $this->switch_back_url() ) . '">Switch back to ' . esc_html( $name ) . '</a></p>';
 		echo '</div>';
 	}
 
+	private function output_fixed_switch_back_link() {
+		if ( ! $this->is_switched_session() ) {
+			return;
+		}
 
+		$admin_id = $this->switched_from_admin_id();
+		$admin    = $admin_id ? get_user_by( 'id', $admin_id ) : null;
+		$name     = $admin ? $admin->user_login : 'admin';
 
+		$url = $this->switch_back_url();
 
+		echo '<div id="mns-switchback" style="
+			position:fixed;left:14px;bottom:14px;z-index:999999;
+			background:rgba(29,35,39,.95);color:#fff;
+			padding:10px 12px;border-radius:10px;
+			font:600 13px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+			box-shadow:0 10px 22px rgba(0,0,0,.25);
+		">';
+		echo '<a href="' . esc_url( $url ) . '" style="color:#fff;text-decoration:none;">Switch back to ' . esc_html( $name ) . '</a>';
+		echo '</div>';
+	}
+
+	public function frontend_switch_back_link() {
+		$this->output_fixed_switch_back_link();
+	}
+
+	public function admin_footer_switch_back_link() {
+		$this->output_fixed_switch_back_link();
+	}
 }
 
 // Hooks that WordPress requires outside the class.
