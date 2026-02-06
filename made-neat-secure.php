@@ -10,6 +10,35 @@
  * Text Domain: made-neat-secure
  */
 
+// --- GitHub Updates (Plugin Update Checker) ---
+$puc_path = __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php';
+
+if ( file_exists( $puc_path ) ) {
+	require_once $puc_path;
+}
+
+add_action('plugins_loaded', function () {
+
+	if ( ! class_exists('\YahnisElsts\PluginUpdateChecker\v5\PucFactory') ) {
+		return;
+	}
+
+	$updateChecker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
+		'https://github.com/cyrilcalixton/made-neat-secure/',
+		__FILE__,
+		'made-neat-secure'
+	);
+
+	$updateChecker->setBranch('main');
+	$updateChecker->getVcsApi()->enableReleaseAssets();
+
+});
+
+// NOW your class starts
+final class Made_Neat_Secure {
+
+}
+
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
@@ -47,7 +76,12 @@ final class Made_Neat_Secure {
 	}
 
 	// --- GitHub Updates (Plugin Update Checker) ---
-	require_once __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php';
+	$puc_path = __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php';
+
+	if ( file_exists( $puc_path ) ) {
+		require_once $puc_path;
+	}
+
 
 	use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
 
