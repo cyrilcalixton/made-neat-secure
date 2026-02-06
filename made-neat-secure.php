@@ -3,7 +3,7 @@
  * Plugin Name: Made Neat – Secure
  * Plugin URI:  https://madeneat.com.au/
  * Description: A curated security and maintenance layer for WordPress. Keeps sites tidy, reduces update distractions, and enables controlled administrator access without compromising safety.
- * Version:     1.0.0
+ * Version:     1.0.1
  * Author:      Made Neat
  * Author URI:  https://madeneat.com.au/
  * License:     GPLv2 or later
@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'MNS_VERSION', '1.0.0' );
+define( 'MNS_VERSION', '1.0.1' );
 define( 'MNS_FILE', __FILE__ );
 
 define( 'MNS_OPTION_KEY', 'mns_settings_v1' );
