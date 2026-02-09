@@ -3,7 +3,7 @@
  * Plugin Name: Made Neat – Secure
  * Plugin URI:  https://madeneat.com.au/
  * Description: A curated security and maintenance layer for WordPress. Keeps sites tidy, reduces update distractions, and enables controlled administrator access without compromising safety.
- * Version:     1.0.1
+ * Version:     1.0.2
  * Author:      Made Neat
  * Author URI:  https://madeneat.com.au/
  * License:     GPLv2 or later
@@ -14,17 +14,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'MNS_VERSION', '1.0.1' );
+define( 'MNS_VERSION', '1.0.2' );
 define( 'MNS_FILE', __FILE__ );
 
 define( 'MNS_OPTION_KEY', 'mns_settings_v1' );
 
 define( 'MNS_META_SWITCHED_FROM', 'mns_switched_from_admin_id' );
 define( 'MNS_META_SWITCHED_AT', 'mns_switched_at' );
-
-define( 'MNS_DB_VERSION', '1.0.0' );
-define( 'MNS_LOG_TABLE', 'mns_secure_logs' );
-define( 'MNS_LOG_RETENTION_DAYS', 30 );
 
 
 // --- GitHub Updates (Plugin Update Checker) ---
@@ -71,18 +67,12 @@ final class Made_Neat_Secure {
 	 */
 	public static function activate() {
 		$self = self::instance();
-		$self->install_logs_table();
-		$self->schedule_log_cleanup();
 	}
 
 	/**
 	 * Deactivation hook entry point.
 	 */
 	public static function deactivate() {
-		$timestamp = wp_next_scheduled( 'mns_cleanup_logs_daily' );
-		if ( $timestamp ) {
-			wp_unschedule_event( $timestamp, 'mns_cleanup_logs_daily' );
-		}
 	}
 
 	private function __construct() {
@@ -106,7 +96,6 @@ final class Made_Neat_Secure {
 		add_action( 'admin_post_mns_update_self', array( $this, 'handle_update_self' ) );
 
 		// Logs cleanup cron
-		add_action( 'mns_cleanup_logs_daily', array( $this, 'cleanup_logs_daily' ) );
 
 		/**
 		 * IMPORTANT SAFETY CHECK:
@@ -115,133 +104,6 @@ final class Made_Neat_Secure {
 		 *
 		 * So we ensure the DB exists and schema is current here.
 		 */
-		add_action( 'admin_init', array( $this, 'maybe_install_or_upgrade_logs_table' ), 1 );
-	}
-
-	/* ============================================================
-	 * LOGS (DB + HELPERS)
-	 * ============================================================ */
-
-	private function logs_table_name() {
-		global $wpdb;
-		return $wpdb->prefix . MNS_LOG_TABLE;
-	}
-
-	private function logs_table_exists() {
-		global $wpdb;
-
-		$table = $this->logs_table_name();
-
-		$exists = $wpdb->get_var(
-			$wpdb->prepare(
-				"SHOW TABLES LIKE %s",
-				$table
-			)
-		);
-
-		return ( $exists === $table );
-	}
-
-	public function maybe_install_or_upgrade_logs_table() {
-		// If table missing OR schema version changed, install/upgrade.
-		$db_version = get_option( 'mns_db_version', '' );
-
-		if ( $db_version !== MNS_DB_VERSION || ! $this->logs_table_exists() ) {
-			$this->install_logs_table();
-			$this->schedule_log_cleanup();
-		}
-	}
-
-	private function install_logs_table() {
-		global $wpdb;
-
-		$table = $this->logs_table_name();
-		$charset_collate = $wpdb->get_charset_collate();
-
-		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-
-		$sql = "CREATE TABLE {$table} (
-			id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-			created_at DATETIME NOT NULL,
-			severity VARCHAR(20) NOT NULL,
-			event VARCHAR(80) NOT NULL,
-			message TEXT NOT NULL,
-			context LONGTEXT NULL,
-			user_id BIGINT(20) UNSIGNED NULL,
-			site_id BIGINT(20) UNSIGNED NULL,
-			PRIMARY KEY  (id),
-			KEY created_at (created_at),
-			KEY severity (severity),
-			KEY event (event),
-			KEY user_id (user_id),
-			KEY site_id (site_id)
-		) {$charset_collate};";
-
-		dbDelta( $sql );
-
-		update_option( 'mns_db_version', MNS_DB_VERSION, false );
-	}
-
-	private function schedule_log_cleanup() {
-		if ( ! wp_next_scheduled( 'mns_cleanup_logs_daily' ) ) {
-			wp_schedule_event( time() + 3600, 'daily', 'mns_cleanup_logs_daily' );
-		}
-	}
-
-	public function cleanup_logs_daily() {
-		global $wpdb;
-
-		$table = $this->logs_table_name();
-		$days  = (int) MNS_LOG_RETENTION_DAYS;
-
-		$wpdb->query(
-			$wpdb->prepare(
-				"DELETE FROM {$table}
-				 WHERE created_at < (UTC_TIMESTAMP() - INTERVAL %d DAY)",
-				$days
-			)
-		);
-	}
-
-	private function log( $event, $message, $context = array(), $severity = 'info' ) {
-		global $wpdb;
-
-		// If table is missing for any reason, do not fatal.
-		if ( ! $this->logs_table_exists() ) {
-			return;
-		}
-
-		$table = $this->logs_table_name();
-
-		$severity = strtolower( trim( (string) $severity ) );
-		if ( ! in_array( $severity, array( 'info', 'warning', 'error' ), true ) ) {
-			$severity = 'info';
-		}
-
-		$event   = sanitize_key( (string) $event );
-		$message = wp_strip_all_tags( (string) $message );
-
-		$user_id = get_current_user_id();
-		$site_id = function_exists( 'get_current_blog_id' ) ? get_current_blog_id() : null;
-
-		$context_json = null;
-		if ( ! empty( $context ) && is_array( $context ) ) {
-			$context_json = wp_json_encode( $context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
-		}
-
-		$wpdb->insert(
-			$table,
-			array(
-				'created_at' => gmdate( 'Y-m-d H:i:s' ),
-				'severity'   => $severity,
-				'event'      => $event,
-				'message'    => $message,
-				'context'    => $context_json,
-				'user_id'    => $user_id ?: null,
-				'site_id'    => $site_id ?: null,
-			),
-			array( '%s', '%s', '%s', '%s', '%s', '%d', '%d' )
-		);
 	}
 
 	/* ============================================================
@@ -254,6 +116,7 @@ final class Made_Neat_Secure {
 			'hide_update_numbers'   => true,
 			'hide_editor'           => true,
 			'enable_user_switching' => true,
+			'hide_plugin_menu'      => false,
 			'excluded_users'        => "ade, madeneat",
 		);
 	}
@@ -311,6 +174,12 @@ final class Made_Neat_Secure {
 	 * ============================================================ */
 
 	public function register_admin_menu() {
+		// Optional: hide this plugin’s menu for everyone except excluded users.
+		$settings = $this->get_settings();
+		if ( ! empty( $settings['hide_plugin_menu'] ) && ! $this->current_user_is_excluded() ) {
+			return;
+		}
+
 		$icon = $this->get_menu_icon();
 
 		add_menu_page(
@@ -344,7 +213,7 @@ final class Made_Neat_Secure {
 
 	private function active_main_tab() {
 		$tab = isset( $_GET['tab'] ) ? sanitize_key( $_GET['tab'] ) : 'site-health';
-		return in_array( $tab, array( 'site-health', 'update-control', 'logs' ), true ) ? $tab : 'site-health';
+		return in_array( $tab, array( 'site-health', 'settings' ), true ) ? $tab : 'site-health';
 	}
 
 	private function active_health_subtab() {
@@ -369,14 +238,11 @@ final class Made_Neat_Secure {
 
 		echo '<h2 class="nav-tab-wrapper" style="margin-top:14px;">';
 		echo '<a class="nav-tab ' . ( 'site-health' === $tab ? 'nav-tab-active' : '' ) . '" href="' . esc_url( admin_url( 'admin.php?page=mns-secure&tab=site-health' ) ) . '">Site Health</a>';
-		echo '<a class="nav-tab ' . ( 'update-control' === $tab ? 'nav-tab-active' : '' ) . '" href="' . esc_url( admin_url( 'admin.php?page=mns-secure&tab=update-control' ) ) . '">Update Control</a>';
-		echo '<a class="nav-tab ' . ( 'logs' === $tab ? 'nav-tab-active' : '' ) . '" href="' . esc_url( admin_url( 'admin.php?page=mns-secure&tab=logs' ) ) . '">Logs</a>';
+		echo '<a class="nav-tab ' . ( 'settings' === $tab ? 'nav-tab-active' : '' ) . '" href="' . esc_url( admin_url( 'admin.php?page=mns-secure&tab=settings' ) ) . '">Settings</a>';
 		echo '</h2>';
 
-		if ( 'update-control' === $tab ) {
-			$this->render_update_control();
-		} elseif ( 'logs' === $tab ) {
-			$this->render_logs();
+		if ( 'settings' === $tab ) {
+			$this->render_settings();
 		} else {
 			$this->render_site_health();
 		}
@@ -385,197 +251,10 @@ final class Made_Neat_Secure {
 	}
 
 	/* ============================================================
-	 * LOGS TAB UI
+	 * SETTINGS TAB
 	 * ============================================================ */
 
-	private function render_logs() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			echo '<p>Not allowed.</p>';
-			return;
-		}
-
-		global $wpdb;
-		$table = $this->logs_table_name();
-
-		// If missing, show a real error instead of lying with an empty table.
-		if ( ! $this->logs_table_exists() ) {
-			echo '<div class="notice notice-error"><p><strong>Logs table is missing.</strong> Please deactivate + reactivate the plugin, or reload wp-admin once.</p></div>';
-			return;
-		}
-
-		// Handle clear logs.
-		if (
-			isset( $_POST['mns_clear_logs'] )
-			&& check_admin_referer( 'mns_clear_logs_action', 'mns_clear_logs_nonce' )
-		) {
-			$wpdb->query( "TRUNCATE TABLE {$table}" );
-
-			// Log AFTER truncation.
-			$this->log( 'logs_cleared', 'Logs were cleared.', array(), 'warning' );
-
-			echo '<div class="notice notice-success is-dismissible"><p>Logs cleared.</p></div>';
-		}
-
-		$severity = isset( $_GET['severity'] ) ? sanitize_text_field( $_GET['severity'] ) : '';
-		$event    = isset( $_GET['event'] ) ? sanitize_text_field( $_GET['event'] ) : '';
-
-		$paged    = isset( $_GET['paged'] ) ? max( 1, absint( $_GET['paged'] ) ) : 1;
-		$per_page = 20;
-		$offset   = ( $paged - 1 ) * $per_page;
-
-		$where = "WHERE 1=1";
-		$args  = array();
-
-		if ( in_array( $severity, array( 'info', 'warning', 'error' ), true ) ) {
-			$where .= " AND severity = %s";
-			$args[] = $severity;
-		}
-
-		if ( ! empty( $event ) ) {
-			$where .= " AND event = %s";
-			$args[] = sanitize_key( $event );
-		}
-
-		$count_sql = "SELECT COUNT(*) FROM {$table} {$where}";
-		$total = (int) $wpdb->get_var( $args ? $wpdb->prepare( $count_sql, $args ) : $count_sql );
-
-		$data_sql = "SELECT * FROM {$table} {$where} ORDER BY id DESC LIMIT %d OFFSET %d";
-		$data_args = array_merge( $args, array( $per_page, $offset ) );
-
-		$rows = $wpdb->get_results( $wpdb->prepare( $data_sql, $data_args ) );
-
-		$events = $wpdb->get_col( "SELECT DISTINCT event FROM {$table} ORDER BY event ASC LIMIT 200" );
-
-		$total_pages = max( 1, (int) ceil( $total / $per_page ) );
-		?>
-		<p style="color:#646970;max-width:980px;">
-			Records key Made Neat – Secure actions (settings changes, update control events).
-			Login/logout events are intentionally not recorded.
-		</p>
-
-		<form method="get" style="margin: 12px 0;">
-			<input type="hidden" name="page" value="<?php echo esc_attr( $_GET['page'] ?? '' ); ?>">
-			<input type="hidden" name="tab" value="logs">
-
-			<label style="margin-right: 12px;">
-				Severity:
-				<select name="severity">
-					<option value="">All</option>
-					<option value="info" <?php selected( $severity, 'info' ); ?>>Info</option>
-					<option value="warning" <?php selected( $severity, 'warning' ); ?>>Warning</option>
-					<option value="error" <?php selected( $severity, 'error' ); ?>>Error</option>
-				</select>
-			</label>
-
-			<label style="margin-right: 12px;">
-				Event:
-				<select name="event">
-					<option value="">All</option>
-					<?php foreach ( $events as $ev ) : ?>
-						<option value="<?php echo esc_attr( $ev ); ?>" <?php selected( $event, $ev ); ?>>
-							<?php echo esc_html( $ev ); ?>
-						</option>
-					<?php endforeach; ?>
-				</select>
-			</label>
-
-			<button class="button button-primary">Filter</button>
-		</form>
-
-		<table class="widefat striped" style="max-width:1200px;">
-			<thead>
-				<tr>
-					<th style="width:170px;">Date</th>
-					<th style="width:90px;">Severity</th>
-					<th style="width:180px;">Event</th>
-					<th style="width:160px;">User</th>
-					<th>Message</th>
-				</tr>
-			</thead>
-			<tbody>
-				<?php if ( empty( $rows ) ) : ?>
-					<tr><td colspan="5">No logs found.</td></tr>
-				<?php else : ?>
-					<?php foreach ( $rows as $row ) : ?>
-						<?php
-						$user_label = 'System';
-						if ( ! empty( $row->user_id ) ) {
-							$u = get_user_by( 'id', (int) $row->user_id );
-							$user_label = $u ? $u->user_login : 'User #' . (int) $row->user_id;
-						}
-						?>
-						<tr>
-							<td><?php echo esc_html( get_date_from_gmt( $row->created_at, 'Y-m-d H:i' ) ); ?></td>
-							<td>
-								<span class="mns-badge mns-<?php echo esc_attr( $row->severity ); ?>">
-									<?php echo esc_html( ucfirst( $row->severity ) ); ?>
-								</span>
-							</td>
-							<td><?php echo esc_html( $row->event ); ?></td>
-							<td><?php echo esc_html( $user_label ); ?></td>
-							<td>
-								<?php echo esc_html( $row->message ); ?>
-
-								<?php if ( ! empty( $row->context ) ) : ?>
-									<details style="margin-top:6px;">
-										<summary>Details</summary>
-										<pre style="white-space: pre-wrap; margin: 8px 0; background: #f6f7f7; padding: 10px; border-radius: 6px;"><?php
-											echo esc_html( $row->context );
-										?></pre>
-									</details>
-								<?php endif; ?>
-							</td>
-						</tr>
-					<?php endforeach; ?>
-				<?php endif; ?>
-			</tbody>
-		</table>
-
-		<?php if ( $total_pages > 1 ) : ?>
-			<div style="margin: 12px 0; display: flex; gap: 10px; align-items: center;">
-				<?php $base_url = remove_query_arg( 'paged' ); ?>
-
-				<?php if ( $paged > 1 ) : ?>
-					<a class="button" href="<?php echo esc_url( add_query_arg( 'paged', $paged - 1, $base_url ) ); ?>">Previous</a>
-				<?php endif; ?>
-
-				<span>Page <?php echo (int) $paged; ?> of <?php echo (int) $total_pages; ?></span>
-
-				<?php if ( $paged < $total_pages ) : ?>
-					<a class="button" href="<?php echo esc_url( add_query_arg( 'paged', $paged + 1, $base_url ) ); ?>">Next</a>
-				<?php endif; ?>
-			</div>
-		<?php endif; ?>
-
-		<form method="post" style="margin-top: 16px;">
-			<?php wp_nonce_field( 'mns_clear_logs_action', 'mns_clear_logs_nonce' ); ?>
-			<button class="button button-secondary" name="mns_clear_logs" value="1"
-				onclick="return confirm('Clear all logs? This cannot be undone.');">
-				Clear Logs
-			</button>
-		</form>
-
-		<style>
-			.mns-badge {
-				display:inline-block;
-				padding:3px 10px;
-				border-radius:999px;
-				font-size:12px;
-				font-weight:600;
-				line-height:1.4;
-			}
-			.mns-info { background:#dbeafe; color:#1e40af; }
-			.mns-warning { background:#fef3c7; color:#92400e; }
-			.mns-error { background:#fee2e2; color:#991b1b; }
-		</style>
-		<?php
-	}
-
-	/* ============================================================
-	 * UPDATE CONTROL TAB
-	 * ============================================================ */
-
-	private function render_update_control() {
+	private function render_settings() {
 		$settings = $this->get_settings();
 		?>
 		<p style="color:#646970;max-width:980px;">
@@ -632,6 +311,18 @@ final class Made_Neat_Secure {
 							<p class="description">Allow administrators to switch into another user account to test permissions and visibility.</p>
 						</td>
 					</tr>
+
+					<tr>
+						<th scope="row">Hide plugin menu</th>
+						<td>
+							<label>
+								<input type="checkbox" name="hide_plugin_menu" value="1" <?php checked( ! empty( $settings['hide_plugin_menu'] ) ); ?> />
+								Hide “Made Neat – Secure” from the admin menu
+							</label>
+							<p class="description">When enabled, this plugin’s admin menu will be hidden for normal admins. Excluded users will still be able to see and access it.</p>
+						</td>
+					</tr>
+
 
 					<tr>
 						<th scope="row">Excluded Users</th>
@@ -913,24 +604,14 @@ final class Made_Neat_Secure {
 			'hide_update_numbers'   => ! empty( $_POST['hide_update_numbers'] ),
 			'hide_editor'           => ! empty( $_POST['hide_editor'] ),
 			'enable_user_switching' => ! empty( $_POST['enable_user_switching'] ),
+			'hide_plugin_menu'      => ! empty( $_POST['hide_plugin_menu'] ),
 			'excluded_users'        => isset( $_POST['excluded_users'] ) ? wp_unslash( $_POST['excluded_users'] ) : '',
 		);
 
 		update_option( MNS_OPTION_KEY, $new, false );
 
-		$this->log(
-			'settings_changed',
-			'Update Control settings updated.',
-			array(
-				'hide_updates'          => (bool) $new['hide_updates'],
-				'hide_update_numbers'   => (bool) $new['hide_update_numbers'],
-				'hide_editor'           => (bool) $new['hide_editor'],
-				'enable_user_switching' => (bool) $new['enable_user_switching'],
-			),
-			'info'
-		);
 
-		wp_safe_redirect( admin_url( 'admin.php?page=mns-secure&tab=update-control' ) );
+		wp_safe_redirect( admin_url( 'admin.php?page=mns-secure&tab=settings' ) );
 		exit;
 	}
 
@@ -997,13 +678,7 @@ final class Made_Neat_Secure {
 		// Block direct access to update-core.php
 		add_action( 'admin_init', function() {
 			if ( ! empty( $GLOBALS['pagenow'] ) && $GLOBALS['pagenow'] === 'update-core.php' ) {
-				Made_Neat_Secure::instance()->log(
-					'update_core_blocked',
-					'Direct access to update-core.php was blocked.',
-					array(),
-					'warning'
-				);
-
+				
 				wp_die( 'Updates are managed centrally for security reasons.', 403 );
 			}
 		}, 1 );
@@ -1118,9 +793,8 @@ final class Made_Neat_Secure {
 			wp_update_plugins();
 		}
 
-		$this->log( 'update_check', 'Manual update check triggered.', array(), 'info' );
 
-		wp_safe_redirect( admin_url( 'admin.php?page=mns-secure&tab=update-control' ) );
+		wp_safe_redirect( admin_url( 'admin.php?page=mns-secure&tab=settings' ) );
 		exit;
 	}
 
@@ -1140,7 +814,6 @@ final class Made_Neat_Secure {
 			require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
 		}
 
-		$this->log( 'self_update', 'Plugin self-update triggered.', array(), 'warning' );
 
 		// Refresh update data first
 		wp_update_plugins();
@@ -1152,9 +825,8 @@ final class Made_Neat_Secure {
 
 		$upgrader->upgrade( $plugin_file );
 
-		$this->log( 'self_update_complete', 'Plugin self-update finished.', array(), 'info' );
 
-		wp_safe_redirect( admin_url( 'admin.php?page=mns-secure&tab=update-control' ) );
+		wp_safe_redirect( admin_url( 'admin.php?page=mns-secure&tab=settings' ) );
 		exit;
 	}
 
@@ -1233,15 +905,6 @@ final class Made_Neat_Secure {
 		update_user_meta( $target_id, MNS_META_SWITCHED_FROM, $admin_id );
 		update_user_meta( $target_id, MNS_META_SWITCHED_AT, time() );
 
-		$this->log(
-			'user_switched',
-			'Administrator switched into another user.',
-			array(
-				'from_admin_id' => $admin_id,
-				'to_user_id'    => $target_id,
-			),
-			'warning'
-		);
 
 		wp_set_current_user( $target_id );
 		wp_set_auth_cookie( $target_id, true );
@@ -1275,15 +938,6 @@ final class Made_Neat_Secure {
 			exit;
 		}
 
-		$this->log(
-			'user_switched_back',
-			'Administrator switched back to original admin.',
-			array(
-				'from_user_id'  => $current_user_id,
-				'to_admin_id'   => $admin_id,
-			),
-			'info'
-		);
 
 		wp_set_current_user( $admin_id );
 		wp_set_auth_cookie( $admin_id, true );
